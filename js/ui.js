@@ -77,7 +77,7 @@
       var wrap = document.getElementById("solver-toggle-wrap");
       if (wrap) wrap.style.display = ok ? "" : "none";
       var st = document.getElementById("solver-status");
-      if (st) st.textContent = ok ? "Server connected" : "";
+      if (st) st.textContent = ok ? "OR-Tools loaded" : "";
     });
   }
 
@@ -177,11 +177,11 @@
                     document.getElementById("rp-use-solver").checked &&
                     solverAvailable;
 
-    if (useSolver && window.PDP_SOLVER) {
+    if (useSolver && window.PDP_SOLVER && PDP_SOLVER.isReady()) {
       var params = buildSolverParams();
-      PDP_SOLVER.solve(params, function (err, result) {
-        if (err || !result || !result.ok) {
-          alert("OR-Tools solver failed: " + (err ? err.message : (result ? result.status : "unreachable")) +
+      PDP_SOLVER.solve(params).then(function (result) {
+        if (!result || !result.ok) {
+          alert("OR-Tools solver failed: " + (result ? result.status : "unknown") +
                 "\nFalling back to client-side heuristic.");
           rebuildPlanClientSide();
           return;
@@ -193,6 +193,10 @@
         state.working = snap();
         selectedRouteId = selectedRouteId && planKey(plan).indexOf(selectedRouteId) > -1 ? selectedRouteId : plan.routes[0].id;
         renderAll("all");
+      }).catch(function (err) {
+        alert("OR-Tools solver error: " + (err ? err.message : "unknown") +
+              "\nFalling back to client-side heuristic.");
+        rebuildPlanClientSide();
       });
     } else {
       rebuildPlanClientSide();

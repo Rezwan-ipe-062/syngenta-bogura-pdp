@@ -1,0 +1,15 @@
+{
+  "name": "pdp-route-optimiser",
+  "private": true,
+
+  "scripts": {
+    "build": "vite build && node -e \"const fs=require('fs'),p=require('path');const d=p.join(__dirname,'dist','assets');const keep=new Set(['solver-DQzBnAtv.js','ortools_worker-Db3aqnWg.js','routing_runtime-dowHRyyE.js','routing_runtime-CuCOktG3.wasm','routing_runtime_asyncify-WhvUlcLF.js','routing_runtime_asyncify-B2vDrhEQ.wasm']);fs.readdirSync(d).filter(f=>!keep.has(f)).forEach(f=>fs.unlinkSync(p.join(d,f)));const s=p.join(d,'solver-DQzBnAtv.js');let c=fs.readFileSync(s,'utf8');c=c.replace(/new URL\\(\\\"\\/assets\\//g,'new URL(\\\"./');fs.writeFileSync(s,c);console.log('dist cleaned')\"",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "or-tools-wasm": "^0.9.1"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}
