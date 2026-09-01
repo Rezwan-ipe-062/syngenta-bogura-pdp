@@ -784,7 +784,6 @@ window.CONSTRAINTS_REGISTER = [];
     var data = cfg.data, matrix = cfg.matrix, N = cfg.N, includeReturn = cfg.includeReturn;
     var register = cfg.register || [], locks = cfg.locks || {};
     var doNot = doNotIndex(cfg.doNotCombine);
-    var thresholds = cfg.thresholds || { longLegKm: 50, routeOutboundKm: 250 };
     var forceRoutes = cfg.forceRouteCount || 0;
     var forceNotes = [];
     var reg = normalizeRegister(register);
@@ -808,7 +807,7 @@ window.CONSTRAINTS_REGISTER = [];
     routes.forEach(function (r) { r.stops.forEach(function (c) { assignment[c] = r.id; }); });
 
     routes.forEach(function (r) {
-      var m = routeMetrics(matrix, cx, r.stops, includeReturn, thresholds);
+      var m = routeMetrics(matrix, cx, r.stops, includeReturn);
       r.metrics = m.metrics; r.warnings = m.warnings;
       r.blockedPairsInRoute = m.blockedPairsInRoute; r.blockedAvoided = m.blockedPairsInRoute.length > 0 ? m.blockedPairsInRoute.length - m.blockedAdjacentCount : 0;
       r.constraintLegs = m.constraintLegs; r.uncertainLegs = m.uncertainLegs;
@@ -831,7 +830,7 @@ window.CONSTRAINTS_REGISTER = [];
     var infeasible = routes.some(function (r) { return r.orderFailed; });
 
     var plan = {
-      n: N, includeReturn: includeReturn, thresholds: thresholds,
+      n: N, includeReturn: includeReturn,
       routes: routes, assignment: assignment, unassigned: unassigned,
       infeasible: infeasible, forceRouteCount: forceRoutes, targetSizes: targetSizes, forceNotes: forceNotes,
       lockOverflow: P.lockOverflow, sizeIssues: P.sizeIssues,
@@ -845,7 +844,7 @@ window.CONSTRAINTS_REGISTER = [];
       _customers: customers,
       registerNotes: reg.notes
     };
-    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, thresholds, P);
+    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, P);
     plan.qa = runQa(plan, matrix, cx);
     return plan;
   }
@@ -960,18 +959,13 @@ window.CONSTRAINTS_REGISTER = [];
   }
 
   /** Metrics + warnings + leg audit for an ordered route. */
-  function routeMetrics(matrix, cx, stops, includeReturn, thresholds) {
+  function routeMetrics(matrix, cx, stops, includeReturn) {
     var out = outboundKm(matrix, stops);
     var ret = stops.length ? dist(matrix, stops[stops.length - 1], "WH") : 0;
     var longest = longestLegKm(matrix, stops);
     var warnings = [];
     var constraintLegs = [], uncertainLegs = [], blockedPairsInRoute = [];
     var blockedAdjacentCount = 0;
-
-    if (longest > thresholds.longLegKm)
-      warnings.push({ type: "longLeg", detail: "longest leg " + round1(longest) + " km > " + thresholds.longLegKm + " km" });
-    if (out > thresholds.routeOutboundKm)
-      warnings.push({ type: "longRoute", detail: "outbound " + round1(out) + " km > " + thresholds.routeOutboundKm + " km" });
 
     var seq = ["WH"].concat(stops).concat(includeReturn ? ["WH"] : []);
     for (var i = 0; i < seq.length - 1; i++) {
@@ -1007,7 +1001,7 @@ window.CONSTRAINTS_REGISTER = [];
     };
   }
 
-  function buildExceptions(plan, matrix, cx, register, thresholds, P) {
+  function buildExceptions(plan, matrix, cx, register, P) {
     var exc = [];
     function add(type, affected, risk, action, status) {
       exc.push({ type: type, affected: affected, risk: risk, action: action, status: status || "Open" });
@@ -1025,11 +1019,7 @@ window.CONSTRAINTS_REGISTER = [];
 
     plan.routes.forEach(function (r) {
       if (r.orderFailed) add("Road-infeasible route", r.id + ": " + ((r.unplaceable || []).join(", ") || "all members"), "Blocked pairings leave no legal stop order; customers are not served until resolved.", "Release Blocked pairs or redistribute these customers manually.", "Open");
-      var longLeg = r.warnings.filter(function (w) { return w.type === "longLeg"; });
-      var longRoute = r.warnings.filter(function (w) { return w.type === "longRoute"; });
       var blockedAttempt = r.warnings.filter(function (w) { return w.type === "blockedUnavoidable" || w.type === "blockedAdjacent"; });
-      longLeg.forEach(function (w) { add("Long geographic leg", r.id + ": " + w.detail, "Straight-line leg may be far longer or impassable by road.", "Road-validation check required for this leg.", "Needs decision"); });
-      longRoute.forEach(function (w) { add("Long route", r.id + ": " + w.detail, "Route outbound geographic distance above threshold.", "Consider splitting or re-sequencing the route.", "Needs decision"); });
       blockedAttempt.forEach(function (w) { add("Blocked pair attempted", r.id + ": " + w.detail, "A Blocked pairing could not be avoided in stop order.", "Move one of the pair to a different route manually.", "Open"); });
       r.uncertainLegs.forEach(function (l) {
         add("Uncertain road/access leg", pairKey(l.a, l.b) + " in " + r.id, "Crossing unconfirmed; may be impassable by the delivery vehicle.", "Field-check and confirm the leg in the Road Constraints Register.", "Needs decision");
@@ -1090,16 +1080,16 @@ window.CONSTRAINTS_REGISTER = [];
   /**
    * Recompute metrics/warnings/exceptions/QA for a plan whose routes were mutated
    * manually (moves, reorders). Keeps stop order; does NOT re-partition.
-   * cfg: { reg: normalized register object, thresholds, n, includeReturn }. Manual
+   * cfg: { reg: normalized register object, n, includeReturn }. Manual
    * route status overrides are applied by the UI layer afterwards.
    */
   function recomputePlan(plan, matrix, cfg) {
     var reg = cfg.reg || normalizeRegister([]);
     var cx = constraintIndex(reg.entries);
-    plan.n = cfg.n; plan.includeReturn = cfg.includeReturn; plan.thresholds = cfg.thresholds;
+    plan.n = cfg.n; plan.includeReturn = cfg.includeReturn;
 
     plan.routes.forEach(function (r) {
-      var m = routeMetrics(matrix, cx, r.stops, cfg.includeReturn, cfg.thresholds);
+      var m = routeMetrics(matrix, cx, r.stops, cfg.includeReturn);
       r.metrics = m.metrics; r.warnings = m.warnings;
       r.blockedPairsInRoute = m.blockedPairsInRoute; r.blockedAvoided = m.blockedPairsInRoute.length > 0 ? m.blockedPairsInRoute.length - m.blockedAdjacentCount : 0;
       r.constraintLegs = m.constraintLegs; r.uncertainLegs = m.uncertainLegs;
@@ -1136,7 +1126,7 @@ window.CONSTRAINTS_REGISTER = [];
     plan.registerNotes = reg.notes;
 
     var P2 = { lockOverflow: plan.lockOverflow || [], sizeIssues: plan.sizeIssues || [] };
-    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, plan.thresholds, P2);
+    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, P2);
     plan.qa = runQa(plan, matrix, cx);
     return plan;
   }
@@ -1475,7 +1465,6 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
 
   var state = {
     N: 7, includeReturn: true,
-    thresholds: { longLegKm: 50, routeOutboundKm: 250 },
     forceRouteCount: 0,
     register: [], locks: {}, doNot: {},
     routeStatus: {}, verifier: {}, original: null, working: null, changelog: [],
@@ -1509,7 +1498,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     return {
       data: data, matrix: matrix, N: state.N, includeReturn: state.includeReturn,
       register: state.register, locks: state.locks, doNotCombine: unpackDoNot(),
-      thresholds: state.thresholds, forceRouteCount: state.forceRouteCount
+      forceRouteCount: state.forceRouteCount
     };
   }
   function unpackDoNot() {
@@ -1577,8 +1566,6 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     el("rp-N").value = state.N;
     el("rp-count").value = state.forceRouteCount || "";
     el("rp-return").checked = state.includeReturn;
-    el("rp-leg").value = state.thresholds.longLegKm;
-    el("rp-route").value = state.thresholds.routeOutboundKm;
     showModal("replan-modal");
   }
   function applyReplan() {
@@ -1586,8 +1573,6 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     if (!n || n < 1 || n > data.customers.length) { alert("N must be between 1 and " + data.customers.length + "."); return; }
     state.N = n;
     state.includeReturn = el("rp-return").checked;
-    state.thresholds.longLegKm = parseFloat(el("rp-leg").value) || 50;
-    state.thresholds.routeOutboundKm = parseFloat(el("rp-route").value) || 250;
     state.forceRouteCount = parseInt(el("rp-count").value, 10) || 0;
     log("replan", { n: state.N, includeReturn: state.includeReturn, note: "Rebuilt plan at N=" + state.N });
     hideModal("replan-modal");
@@ -1837,7 +1822,6 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     setText("sum-review", s.customersRequiringReview.toLocaleString());
     setText("sum-outbound", fmt(s.totalOutboundKm) + " km");
     setText("sum-score", fmt(s.totalScoreKm) + " km");
-    setText("sum-thresh", "Long leg > " + state.thresholds.longLegKm + " km | Route outbound > " + state.thresholds.routeOutboundKm + " km");
     setText("sum-unassigned", s.unassignedCount > 0 ? s.unassignedCount + " UNASSIGNED" : "0");
     el("sum-unassigned").classList.toggle("bad", s.unassignedCount > 0);
     var warns = [];
@@ -2153,7 +2137,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
 
   function recompute() {
     plan = PDP.recomputePlan(plan, matrix, {
-      reg: PDP.normalizeRegister(state.register), thresholds: state.thresholds,
+      reg: PDP.normalizeRegister(state.register),
       n: state.N, includeReturn: state.includeReturn
     });
     plan.changelog = state.changelog;
@@ -2309,12 +2293,10 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     } catch (e) { return false; }
   }
 
-  /** Minimal programmatic facade - used by js/selftest.js (and handy for console work). */
-  function replan(n, includeReturn, longLegKm, routeOutboundKm, forceRouteCount) {
+  /** Minimal programmatic facade - used by selftest.html (and handy for console work). */
+  function replan(n, includeReturn, _longLegKm, _routeOutboundKm, forceRouteCount) {
     state.N = n;
     state.includeReturn = includeReturn !== false;
-    state.thresholds.longLegKm = longLegKm || 50;
-    state.thresholds.routeOutboundKm = routeOutboundKm || 250;
     state.forceRouteCount = forceRouteCount || 0;
     log("replan", { n: state.N, includeReturn: state.includeReturn, note: "Rebuilt plan at N=" + state.N });
     save();
@@ -2474,7 +2456,6 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
           <span>Total outbound</span><span id="sum-outbound"></span>
           <span>Total score</span><span id="sum-score"></span>
         </div>
-        <p id="sum-thresh" class="thresh"></p>
         <div class="btnrow">
           <button id="replan-btn">Replan / change N</button>
           <button id="restore-btn" title="Undo all manual adjustments">Restore original</button>
@@ -2593,8 +2574,6 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
     <label>Route size N <input id="rp-N" type="number" min="1" max="140" value="7"></label>
     <label>Force exact number of routes (optional; overrides N) <input id="rp-count" type="number" min="1" max="140" value=""></label>
     <label class="checkbox"><input id="rp-return" type="checkbox" checked> Include return-to-warehouse distance in route score.</label>
-    <label>Long-leg warning threshold (km) <input id="rp-leg" type="number" min="1" value="50"></label>
-    <label>Route outbound warning threshold (km) <input id="rp-route" type="number" min="1" value="250"></label>
     <div class="btnrow">
       <button id="rp-ok">Build plan</button>
       <button id="rp-cancel">Cancel</button>
@@ -3109,7 +3088,7 @@ console.log("\n=== UNCERTAIN LEG FLAGGING ===");
   const cidA = p7.routes[0].stops[0], cidB = p7.routes[0].stops[1];
   const regU = [{ from: cidA, to: cidB, type: "Ferry required", description: "test", status: "Uncertain", allowedVehicle: "", detourNote: "", confirmedBy: "", confirmationDate: "" }];
   const cxU = PDP.constraintIndex(PDP.normalizeRegister(regU).entries);
-  const rt = PDP.routeMetrics(matrix, cxU, [cidA, cidB], true, { longLegKm: 50, routeOutboundKm: 250 });
+  const rt = PDP.routeMetrics(matrix, cxU, [cidA, cidB], true);
   check("Uncertain leg produces visible warning (forced adjacency)", rt.uncertainLegs.length === 1 && rt.reviewRequired,
     rt.warnings.map(w => w.type + ":" + w.detail).join(",") || "no warning");
   // integration: when engine keeps the pair consecutive in some route, that route must be flagged
@@ -3120,14 +3099,6 @@ console.log("\n=== UNCERTAIN LEG FLAGGING ===");
     flagged.every(r => r.status === "Needs Manual Road Review"),
     flagged.map(r => r.id + "=" + r.status).join(",") || "pair not consecutive anywhere (no leg -> nothing to flag)");
 }
-
-// ---- threshold warnings
-console.log("\n=== THRESHOLD WARNINGS ===");
-const pw = PDP.buildPlan({ data: DATA, matrix, N: 7, includeReturn: true, register: [], locks: {}, doNotCombine: {}, thresholds: { longLegKm: 1, routeOutboundKm: 1 } });
-const legWarn = pw.routes.filter(r => r.warnings.some(w => w.type === "longLeg")).length;
-const routeWarn = pw.routes.filter(r => r.warnings.some(w => w.type === "longRoute")).length;
-check("Adjustable long-leg threshold flags legs", legWarn > 0, legWarn + " routes leg-warned");
-check("Adjustable long-route threshold flags routes", routeWarn > 0, routeWarn + " routes");
 
 // ---- locks honoured
 console.log("\n=== LOCK TEST ===");
@@ -3397,7 +3368,7 @@ function run(frame) {
   });
   check("no un-flagged Uncertain adjacency", uncertainBad.length === 0, uncertainBad.join(",") || "pair not adjacent (nothing to flag)");
   var forced = PDP.routeMetrics(matrix, PDP.constraintIndex(PDP.normalizeRegister(UI.state().register).entries),
-    ["C001", "C040"], true, { longLegKm: 50, routeOutboundKm: 250 });
+    ["C001", "C040"], true);
   check("forced Uncertain adjacency is flagged", forced.uncertainLegs.length === 1 && forced.reviewRequired === true);
 
   // exports rows

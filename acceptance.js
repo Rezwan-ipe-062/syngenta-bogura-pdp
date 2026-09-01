@@ -70,7 +70,7 @@ console.log("\n=== UNCERTAIN LEG FLAGGING ===");
   const cidA = p7.routes[0].stops[0], cidB = p7.routes[0].stops[1];
   const regU = [{ from: cidA, to: cidB, type: "Ferry required", description: "test", status: "Uncertain", allowedVehicle: "", detourNote: "", confirmedBy: "", confirmationDate: "" }];
   const cxU = PDP.constraintIndex(PDP.normalizeRegister(regU).entries);
-  const rt = PDP.routeMetrics(matrix, cxU, [cidA, cidB], true, { longLegKm: 50, routeOutboundKm: 250 });
+  const rt = PDP.routeMetrics(matrix, cxU, [cidA, cidB], true);
   check("Uncertain leg produces visible warning (forced adjacency)", rt.uncertainLegs.length === 1 && rt.reviewRequired,
     rt.warnings.map(w => w.type + ":" + w.detail).join(",") || "no warning");
   // integration: when engine keeps the pair consecutive in some route, that route must be flagged
@@ -81,14 +81,6 @@ console.log("\n=== UNCERTAIN LEG FLAGGING ===");
     flagged.every(r => r.status === "Needs Manual Road Review"),
     flagged.map(r => r.id + "=" + r.status).join(",") || "pair not consecutive anywhere (no leg -> nothing to flag)");
 }
-
-// ---- threshold warnings
-console.log("\n=== THRESHOLD WARNINGS ===");
-const pw = PDP.buildPlan({ data: DATA, matrix, N: 7, includeReturn: true, register: [], locks: {}, doNotCombine: {}, thresholds: { longLegKm: 1, routeOutboundKm: 1 } });
-const legWarn = pw.routes.filter(r => r.warnings.some(w => w.type === "longLeg")).length;
-const routeWarn = pw.routes.filter(r => r.warnings.some(w => w.type === "longRoute")).length;
-check("Adjustable long-leg threshold flags legs", legWarn > 0, legWarn + " routes leg-warned");
-check("Adjustable long-route threshold flags routes", routeWarn > 0, routeWarn + " routes");
 
 // ---- locks honoured
 console.log("\n=== LOCK TEST ===");

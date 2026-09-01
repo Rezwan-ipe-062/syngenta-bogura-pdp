@@ -114,7 +114,7 @@ function run(frame) {
   });
   check("no un-flagged Uncertain adjacency", uncertainBad.length === 0, uncertainBad.join(",") || "pair not adjacent (nothing to flag)");
   var forced = PDP.routeMetrics(matrix, PDP.constraintIndex(PDP.normalizeRegister(UI.state().register).entries),
-    ["C001", "C040"], true, { longLegKm: 50, routeOutboundKm: 250 });
+    ["C001", "C040"], true);
   check("forced Uncertain adjacency is flagged", forced.uncertainLegs.length === 1 && forced.reviewRequired === true);
 
   // exports rows

@@ -62,7 +62,6 @@
           <span>Total outbound</span><span id="sum-outbound"></span>
           <span>Total score</span><span id="sum-score"></span>
         </div>
-        <p id="sum-thresh" class="thresh"></p>
         <div class="btnrow">
           <button id="replan-btn">Replan / change N</button>
           <button id="restore-btn" title="Undo all manual adjustments">Restore original</button>
@@ -181,8 +180,6 @@
     <label>Route size N <input id="rp-N" type="number" min="1" max="140" value="7"></label>
     <label>Force exact number of routes (optional; overrides N) <input id="rp-count" type="number" min="1" max="140" value=""></label>
     <label class="checkbox"><input id="rp-return" type="checkbox" checked> Include return-to-warehouse distance in route score.</label>
-    <label>Long-leg warning threshold (km) <input id="rp-leg" type="number" min="1" value="50"></label>
-    <label>Route outbound warning threshold (km) <input id="rp-route" type="number" min="1" value="250"></label>
     <div class="btnrow">
       <button id="rp-ok">Build plan</button>
       <button id="rp-cancel">Cancel</button>

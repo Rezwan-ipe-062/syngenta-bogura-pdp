@@ -20,7 +20,6 @@
 
   var state = {
     N: 7, includeReturn: true,
-    thresholds: { longLegKm: 50, routeOutboundKm: 250 },
     forceRouteCount: 0,
     register: [], locks: {}, doNot: {},
     routeStatus: {}, verifier: {}, original: null, working: null, changelog: [],
@@ -54,7 +53,7 @@
     return {
       data: data, matrix: matrix, N: state.N, includeReturn: state.includeReturn,
       register: state.register, locks: state.locks, doNotCombine: unpackDoNot(),
-      thresholds: state.thresholds, forceRouteCount: state.forceRouteCount
+      forceRouteCount: state.forceRouteCount
     };
   }
   function unpackDoNot() {
@@ -122,8 +121,6 @@
     el("rp-N").value = state.N;
     el("rp-count").value = state.forceRouteCount || "";
     el("rp-return").checked = state.includeReturn;
-    el("rp-leg").value = state.thresholds.longLegKm;
-    el("rp-route").value = state.thresholds.routeOutboundKm;
     showModal("replan-modal");
   }
   function applyReplan() {
@@ -131,8 +128,6 @@
     if (!n || n < 1 || n > data.customers.length) { alert("N must be between 1 and " + data.customers.length + "."); return; }
     state.N = n;
     state.includeReturn = el("rp-return").checked;
-    state.thresholds.longLegKm = parseFloat(el("rp-leg").value) || 50;
-    state.thresholds.routeOutboundKm = parseFloat(el("rp-route").value) || 250;
     state.forceRouteCount = parseInt(el("rp-count").value, 10) || 0;
     log("replan", { n: state.N, includeReturn: state.includeReturn, note: "Rebuilt plan at N=" + state.N });
     hideModal("replan-modal");
@@ -382,7 +377,6 @@
     setText("sum-review", s.customersRequiringReview.toLocaleString());
     setText("sum-outbound", fmt(s.totalOutboundKm) + " km");
     setText("sum-score", fmt(s.totalScoreKm) + " km");
-    setText("sum-thresh", "Long leg > " + state.thresholds.longLegKm + " km | Route outbound > " + state.thresholds.routeOutboundKm + " km");
     setText("sum-unassigned", s.unassignedCount > 0 ? s.unassignedCount + " UNASSIGNED" : "0");
     el("sum-unassigned").classList.toggle("bad", s.unassignedCount > 0);
     var warns = [];
@@ -698,7 +692,7 @@
 
   function recompute() {
     plan = PDP.recomputePlan(plan, matrix, {
-      reg: PDP.normalizeRegister(state.register), thresholds: state.thresholds,
+      reg: PDP.normalizeRegister(state.register),
       n: state.N, includeReturn: state.includeReturn
     });
     plan.changelog = state.changelog;
@@ -854,12 +848,10 @@
     } catch (e) { return false; }
   }
 
-  /** Minimal programmatic facade - used by js/selftest.js (and handy for console work). */
-  function replan(n, includeReturn, longLegKm, routeOutboundKm, forceRouteCount) {
+  /** Minimal programmatic facade - used by selftest.html (and handy for console work). */
+  function replan(n, includeReturn, _longLegKm, _routeOutboundKm, forceRouteCount) {
     state.N = n;
     state.includeReturn = includeReturn !== false;
-    state.thresholds.longLegKm = longLegKm || 50;
-    state.thresholds.routeOutboundKm = routeOutboundKm || 250;
     state.forceRouteCount = forceRouteCount || 0;
     log("replan", { n: state.N, includeReturn: state.includeReturn, note: "Rebuilt plan at N=" + state.N });
     save();

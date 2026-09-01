@@ -404,7 +404,6 @@
     var data = cfg.data, matrix = cfg.matrix, N = cfg.N, includeReturn = cfg.includeReturn;
     var register = cfg.register || [], locks = cfg.locks || {};
     var doNot = doNotIndex(cfg.doNotCombine);
-    var thresholds = cfg.thresholds || { longLegKm: 50, routeOutboundKm: 250 };
     var forceRoutes = cfg.forceRouteCount || 0;
     var forceNotes = [];
     var reg = normalizeRegister(register);
@@ -428,7 +427,7 @@
     routes.forEach(function (r) { r.stops.forEach(function (c) { assignment[c] = r.id; }); });
 
     routes.forEach(function (r) {
-      var m = routeMetrics(matrix, cx, r.stops, includeReturn, thresholds);
+      var m = routeMetrics(matrix, cx, r.stops, includeReturn);
       r.metrics = m.metrics; r.warnings = m.warnings;
       r.blockedPairsInRoute = m.blockedPairsInRoute; r.blockedAvoided = m.blockedPairsInRoute.length > 0 ? m.blockedPairsInRoute.length - m.blockedAdjacentCount : 0;
       r.constraintLegs = m.constraintLegs; r.uncertainLegs = m.uncertainLegs;
@@ -451,7 +450,7 @@
     var infeasible = routes.some(function (r) { return r.orderFailed; });
 
     var plan = {
-      n: N, includeReturn: includeReturn, thresholds: thresholds,
+      n: N, includeReturn: includeReturn,
       routes: routes, assignment: assignment, unassigned: unassigned,
       infeasible: infeasible, forceRouteCount: forceRoutes, targetSizes: targetSizes, forceNotes: forceNotes,
       lockOverflow: P.lockOverflow, sizeIssues: P.sizeIssues,
@@ -465,7 +464,7 @@
       _customers: customers,
       registerNotes: reg.notes
     };
-    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, thresholds, P);
+    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, P);
     plan.qa = runQa(plan, matrix, cx);
     return plan;
   }
@@ -580,18 +579,13 @@
   }
 
   /** Metrics + warnings + leg audit for an ordered route. */
-  function routeMetrics(matrix, cx, stops, includeReturn, thresholds) {
+  function routeMetrics(matrix, cx, stops, includeReturn) {
     var out = outboundKm(matrix, stops);
     var ret = stops.length ? dist(matrix, stops[stops.length - 1], "WH") : 0;
     var longest = longestLegKm(matrix, stops);
     var warnings = [];
     var constraintLegs = [], uncertainLegs = [], blockedPairsInRoute = [];
     var blockedAdjacentCount = 0;
-
-    if (longest > thresholds.longLegKm)
-      warnings.push({ type: "longLeg", detail: "longest leg " + round1(longest) + " km > " + thresholds.longLegKm + " km" });
-    if (out > thresholds.routeOutboundKm)
-      warnings.push({ type: "longRoute", detail: "outbound " + round1(out) + " km > " + thresholds.routeOutboundKm + " km" });
 
     var seq = ["WH"].concat(stops).concat(includeReturn ? ["WH"] : []);
     for (var i = 0; i < seq.length - 1; i++) {
@@ -627,7 +621,7 @@
     };
   }
 
-  function buildExceptions(plan, matrix, cx, register, thresholds, P) {
+  function buildExceptions(plan, matrix, cx, register, P) {
     var exc = [];
     function add(type, affected, risk, action, status) {
       exc.push({ type: type, affected: affected, risk: risk, action: action, status: status || "Open" });
@@ -645,11 +639,7 @@
 
     plan.routes.forEach(function (r) {
       if (r.orderFailed) add("Road-infeasible route", r.id + ": " + ((r.unplaceable || []).join(", ") || "all members"), "Blocked pairings leave no legal stop order; customers are not served until resolved.", "Release Blocked pairs or redistribute these customers manually.", "Open");
-      var longLeg = r.warnings.filter(function (w) { return w.type === "longLeg"; });
-      var longRoute = r.warnings.filter(function (w) { return w.type === "longRoute"; });
       var blockedAttempt = r.warnings.filter(function (w) { return w.type === "blockedUnavoidable" || w.type === "blockedAdjacent"; });
-      longLeg.forEach(function (w) { add("Long geographic leg", r.id + ": " + w.detail, "Straight-line leg may be far longer or impassable by road.", "Road-validation check required for this leg.", "Needs decision"); });
-      longRoute.forEach(function (w) { add("Long route", r.id + ": " + w.detail, "Route outbound geographic distance above threshold.", "Consider splitting or re-sequencing the route.", "Needs decision"); });
       blockedAttempt.forEach(function (w) { add("Blocked pair attempted", r.id + ": " + w.detail, "A Blocked pairing could not be avoided in stop order.", "Move one of the pair to a different route manually.", "Open"); });
       r.uncertainLegs.forEach(function (l) {
         add("Uncertain road/access leg", pairKey(l.a, l.b) + " in " + r.id, "Crossing unconfirmed; may be impassable by the delivery vehicle.", "Field-check and confirm the leg in the Road Constraints Register.", "Needs decision");
@@ -710,16 +700,16 @@
   /**
    * Recompute metrics/warnings/exceptions/QA for a plan whose routes were mutated
    * manually (moves, reorders). Keeps stop order; does NOT re-partition.
-   * cfg: { reg: normalized register object, thresholds, n, includeReturn }. Manual
+   * cfg: { reg: normalized register object, n, includeReturn }. Manual
    * route status overrides are applied by the UI layer afterwards.
    */
   function recomputePlan(plan, matrix, cfg) {
     var reg = cfg.reg || normalizeRegister([]);
     var cx = constraintIndex(reg.entries);
-    plan.n = cfg.n; plan.includeReturn = cfg.includeReturn; plan.thresholds = cfg.thresholds;
+    plan.n = cfg.n; plan.includeReturn = cfg.includeReturn;
 
     plan.routes.forEach(function (r) {
-      var m = routeMetrics(matrix, cx, r.stops, cfg.includeReturn, cfg.thresholds);
+      var m = routeMetrics(matrix, cx, r.stops, cfg.includeReturn);
       r.metrics = m.metrics; r.warnings = m.warnings;
       r.blockedPairsInRoute = m.blockedPairsInRoute; r.blockedAvoided = m.blockedPairsInRoute.length > 0 ? m.blockedPairsInRoute.length - m.blockedAdjacentCount : 0;
       r.constraintLegs = m.constraintLegs; r.uncertainLegs = m.uncertainLegs;
@@ -756,7 +746,7 @@
     plan.registerNotes = reg.notes;
 
     var P2 = { lockOverflow: plan.lockOverflow || [], sizeIssues: plan.sizeIssues || [] };
-    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, plan.thresholds, P2);
+    plan.exceptions = buildExceptions(plan, matrix, cx, reg.entries, P2);
     plan.qa = runQa(plan, matrix, cx);
     return plan;
   }
