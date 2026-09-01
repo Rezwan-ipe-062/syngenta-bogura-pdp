@@ -66,7 +66,103 @@
   }
   function planKey(p) { return p.routes.map(function (r) { return r.id; }).join(","); }
 
-  function rebuildPlan() {
+  /* ---------------- OR-Tools solver integration ---------------- */
+
+  var solverAvailable = false;
+
+  function detectSolver() {
+    if (!window.PDP_SOLVER) return;
+    PDP_SOLVER.check(function (ok) {
+      solverAvailable = ok;
+      var wrap = document.getElementById("solver-toggle-wrap");
+      if (wrap) wrap.style.display = ok ? "" : "none";
+      var st = document.getElementById("solver-status");
+      if (st) st.textContent = ok ? "Server connected" : "";
+    });
+  }
+
+  function buildSolverParams() {
+    var blocked = [];
+    state.register.forEach(function (e) {
+      if (e.status === "Blocked") blocked.push([e.from, e.to]);
+    });
+    var dnc = [];
+    Object.keys(state.doNot).forEach(function (k) {
+      var parts = k.split("~");
+      if (parts.length === 2 && parts[0] < parts[1]) dnc.push(parts);
+    });
+    return {
+      warehouse: { id: "WH", lat: data.warehouse.lat, lon: data.warehouse.lon, name: data.warehouse.name },
+      customers: data.customers.map(function (c) { return { id: c.id, lat: c.lat, lon: c.lon }; }),
+      num_vehicles: state.forceRouteCount || Math.ceil(data.customers.length / state.N),
+      route_capacity: state.N,
+      include_return: state.includeReturn,
+      blocked_pairs: blocked,
+      do_not_combine: dnc,
+      locked_customers: state.locks,
+      time_limit_seconds: 30,
+    };
+  }
+
+  function convertSolverResult(result) {
+    var cx = PDP.constraintIndex(PDP.normalizeRegister(state.register).entries);
+    var routes = result.routes.map(function (r) {
+      var stops = r.stops;
+      var m = PDP.routeMetrics(matrix, cx, stops, state.includeReturn);
+      return {
+        id: r.id,
+        stops: stops,
+        metrics: m.metrics,
+        warnings: m.warnings,
+        constraintLegs: m.constraintLegs,
+        uncertainLegs: m.uncertainLegs,
+        blockedPairsInRoute: m.blockedPairsInRoute,
+        blockedAvoided: m.blockedAvoided,
+        reviewRequired: m.reviewRequired,
+        status: m.reviewRequired ? "Needs Manual Road Review" : "Draft",
+        customerCount: stops.length,
+      };
+    });
+    var assigned = {};
+    routes.forEach(function (r) { r.stops.forEach(function (cid) { assigned[cid] = r.id; }); });
+    var exceptions = [];
+    routes.forEach(function (r) {
+      (r.warnings || []).forEach(function (w) {
+        exceptions.push({ type: w.type || "Warning", status: "Open", affected: r.id + " " + (w.customer || ""), risk: w.detail || "", action: "Review" });
+      });
+    });
+    var totalOut = 0, totalScore = 0, reviewCount = 0, warnCount = 0;
+    routes.forEach(function (r) {
+      totalOut += r.metrics.outboundKm;
+      totalScore += r.metrics.scoreKm;
+      if (r.reviewRequired) reviewCount++;
+      warnCount += r.warnings.length;
+    });
+    return {
+      routes: routes,
+      _customers: data.customers,
+      assignment: assigned,
+      exceptions: exceptions,
+      infeasible: false,
+      summary: {
+        routeCount: routes.length,
+        customerCount: data.customers.length,
+        customersAssigned: data.customers.length,
+        unassignedCount: 0,
+        totalOutboundKm: totalOut,
+        totalScoreKm: totalScore,
+        customersRequiringReview: reviewCount,
+        warningCount: warnCount,
+      },
+      targetSizes: (function () {
+        var counts = routes.map(function (r) { return r.stops.length; });
+        return counts;
+      })(),
+      _solverResult: result,
+    };
+  }
+
+  function rebuildPlanClientSide() {
     plan = PDP.buildPlan(buildCfg());
     plan.changelog = state.changelog;
     applyStatusOverrides();
@@ -74,6 +170,33 @@
     state.working = snap();
     selectedRouteId = selectedRouteId && planKey(plan).indexOf(selectedRouteId) > -1 ? selectedRouteId : plan.routes[0].id;
     renderAll("all");
+  }
+
+  function rebuildPlan() {
+    var useSolver = document.getElementById("rp-use-solver") &&
+                    document.getElementById("rp-use-solver").checked &&
+                    solverAvailable;
+
+    if (useSolver && window.PDP_SOLVER) {
+      var params = buildSolverParams();
+      PDP_SOLVER.solve(params, function (err, result) {
+        if (err || !result || !result.ok) {
+          alert("OR-Tools solver failed: " + (err ? err.message : (result ? result.status : "unreachable")) +
+                "\nFalling back to client-side heuristic.");
+          rebuildPlanClientSide();
+          return;
+        }
+        plan = convertSolverResult(result);
+        plan.changelog = state.changelog;
+        applyStatusOverrides();
+        state.original = snap();
+        state.working = snap();
+        selectedRouteId = selectedRouteId && planKey(plan).indexOf(selectedRouteId) > -1 ? selectedRouteId : plan.routes[0].id;
+        renderAll("all");
+      });
+    } else {
+      rebuildPlanClientSide();
+    }
   }
 
   function applyStatusOverrides() {
@@ -168,7 +291,7 @@
     return data.customers.some(function (c) { return !!c.info; });
   }
   function recColor(rec) {
-    if (rec === undefined || rec === null) return "#c7cdd6";
+    if (rec === undefined || rec === null) return "#3B82F6";
     if (rec <= 1) return "#2e7d32";
     if (rec <= 6) return "#ef8a1d";
     return "#c9403d";
@@ -272,7 +395,7 @@
     if (!baseLayer) return;
     baseLayer.clearLayers();
     data.customers.forEach(function (c) {
-      var col = c.info && state.mapRecency ? recColor(c.info.r) : "#c9cfd9";
+      var col = c.info && state.mapRecency ? recColor(c.info.r) : "#3B82F6";
       var mk = L.marker([c.lat, c.lon], {
         icon: L.divIcon({
           className: "bdot-wrap",
@@ -708,7 +831,6 @@
     renderRouteList();
     renderMap({ fit: fit });
     renderRouteDetails();
-    renderExceptions();
   }
 
   /* ---------------- events ---------------- */
@@ -849,7 +971,7 @@
   }
 
   /** Minimal programmatic facade - used by selftest.html (and handy for console work). */
-  function replan(n, includeReturn, _longLegKm, _routeOutboundKm, forceRouteCount) {
+  function replan(n, includeReturn, forceRouteCount) {
     state.N = n;
     state.includeReturn = includeReturn !== false;
     state.forceRouteCount = forceRouteCount || 0;
@@ -885,6 +1007,7 @@
 
   function init() {
     wireEvents();
+    detectSolver();
     if (!data) return; // no data yet; loader.js shows the upload screen
     setData(data);
     if (!restore()) {

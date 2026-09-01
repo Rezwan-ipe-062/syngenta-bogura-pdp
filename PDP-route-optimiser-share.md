@@ -1511,7 +1511,103 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
   }
   function planKey(p) { return p.routes.map(function (r) { return r.id; }).join(","); }
 
-  function rebuildPlan() {
+  /* ---------------- OR-Tools solver integration ---------------- */
+
+  var solverAvailable = false;
+
+  function detectSolver() {
+    if (!window.PDP_SOLVER) return;
+    PDP_SOLVER.check(function (ok) {
+      solverAvailable = ok;
+      var wrap = document.getElementById("solver-toggle-wrap");
+      if (wrap) wrap.style.display = ok ? "" : "none";
+      var st = document.getElementById("solver-status");
+      if (st) st.textContent = ok ? "Server connected" : "";
+    });
+  }
+
+  function buildSolverParams() {
+    var blocked = [];
+    state.register.forEach(function (e) {
+      if (e.status === "Blocked") blocked.push([e.from, e.to]);
+    });
+    var dnc = [];
+    Object.keys(state.doNot).forEach(function (k) {
+      var parts = k.split("~");
+      if (parts.length === 2 && parts[0] < parts[1]) dnc.push(parts);
+    });
+    return {
+      warehouse: { id: "WH", lat: data.warehouse.lat, lon: data.warehouse.lon, name: data.warehouse.name },
+      customers: data.customers.map(function (c) { return { id: c.id, lat: c.lat, lon: c.lon }; }),
+      num_vehicles: state.forceRouteCount || Math.ceil(data.customers.length / state.N),
+      route_capacity: state.N,
+      include_return: state.includeReturn,
+      blocked_pairs: blocked,
+      do_not_combine: dnc,
+      locked_customers: state.locks,
+      time_limit_seconds: 30,
+    };
+  }
+
+  function convertSolverResult(result) {
+    var cx = PDP.constraintIndex(PDP.normalizeRegister(state.register).entries);
+    var routes = result.routes.map(function (r) {
+      var stops = r.stops;
+      var m = PDP.routeMetrics(matrix, cx, stops, state.includeReturn);
+      return {
+        id: r.id,
+        stops: stops,
+        metrics: m.metrics,
+        warnings: m.warnings,
+        constraintLegs: m.constraintLegs,
+        uncertainLegs: m.uncertainLegs,
+        blockedPairsInRoute: m.blockedPairsInRoute,
+        blockedAvoided: m.blockedAvoided,
+        reviewRequired: m.reviewRequired,
+        status: m.reviewRequired ? "Needs Manual Road Review" : "Draft",
+        customerCount: stops.length,
+      };
+    });
+    var assigned = {};
+    routes.forEach(function (r) { r.stops.forEach(function (cid) { assigned[cid] = r.id; }); });
+    var exceptions = [];
+    routes.forEach(function (r) {
+      (r.warnings || []).forEach(function (w) {
+        exceptions.push({ type: w.type || "Warning", status: "Open", affected: r.id + " " + (w.customer || ""), risk: w.detail || "", action: "Review" });
+      });
+    });
+    var totalOut = 0, totalScore = 0, reviewCount = 0, warnCount = 0;
+    routes.forEach(function (r) {
+      totalOut += r.metrics.outboundKm;
+      totalScore += r.metrics.scoreKm;
+      if (r.reviewRequired) reviewCount++;
+      warnCount += r.warnings.length;
+    });
+    return {
+      routes: routes,
+      _customers: data.customers,
+      assignment: assigned,
+      exceptions: exceptions,
+      infeasible: false,
+      summary: {
+        routeCount: routes.length,
+        customerCount: data.customers.length,
+        customersAssigned: data.customers.length,
+        unassignedCount: 0,
+        totalOutboundKm: totalOut,
+        totalScoreKm: totalScore,
+        customersRequiringReview: reviewCount,
+        warningCount: warnCount,
+      },
+      targetSizes: (function () {
+        var counts = routes.map(function (r) { return r.stops.length; });
+        return counts;
+      })(),
+      _solverResult: result,
+    };
+  }
+
+  function rebuildPlanClientSide() {
     plan = PDP.buildPlan(buildCfg());
     plan.changelog = state.changelog;
     applyStatusOverrides();
@@ -1519,6 +1615,33 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     state.working = snap();
     selectedRouteId = selectedRouteId && planKey(plan).indexOf(selectedRouteId) > -1 ? selectedRouteId : plan.routes[0].id;
     renderAll("all");
+  }
+
+  function rebuildPlan() {
+    var useSolver = document.getElementById("rp-use-solver") &&
+                    document.getElementById("rp-use-solver").checked &&
+                    solverAvailable;
+
+    if (useSolver && window.PDP_SOLVER) {
+      var params = buildSolverParams();
+      PDP_SOLVER.solve(params, function (err, result) {
+        if (err || !result || !result.ok) {
+          alert("OR-Tools solver failed: " + (err ? err.message : (result ? result.status : "unreachable")) +
+                "\nFalling back to client-side heuristic.");
+          rebuildPlanClientSide();
+          return;
+        }
+        plan = convertSolverResult(result);
+        plan.changelog = state.changelog;
+        applyStatusOverrides();
+        state.original = snap();
+        state.working = snap();
+        selectedRouteId = selectedRouteId && planKey(plan).indexOf(selectedRouteId) > -1 ? selectedRouteId : plan.routes[0].id;
+        renderAll("all");
+      });
+    } else {
+      rebuildPlanClientSide();
+    }
   }
 
   function applyStatusOverrides() {
@@ -1613,7 +1736,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     return data.customers.some(function (c) { return !!c.info; });
   }
   function recColor(rec) {
-    if (rec === undefined || rec === null) return "#c7cdd6";
+    if (rec === undefined || rec === null) return "#3B82F6";
     if (rec <= 1) return "#2e7d32";
     if (rec <= 6) return "#ef8a1d";
     return "#c9403d";
@@ -1717,7 +1840,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     if (!baseLayer) return;
     baseLayer.clearLayers();
     data.customers.forEach(function (c) {
-      var col = c.info && state.mapRecency ? recColor(c.info.r) : "#c9cfd9";
+      var col = c.info && state.mapRecency ? recColor(c.info.r) : "#3B82F6";
       var mk = L.marker([c.lat, c.lon], {
         icon: L.divIcon({
           className: "bdot-wrap",
@@ -2153,7 +2276,6 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
     renderRouteList();
     renderMap({ fit: fit });
     renderRouteDetails();
-    renderExceptions();
   }
 
   /* ---------------- events ---------------- */
@@ -2294,7 +2416,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
   }
 
   /** Minimal programmatic facade - used by selftest.html (and handy for console work). */
-  function replan(n, includeReturn, _longLegKm, _routeOutboundKm, forceRouteCount) {
+  function replan(n, includeReturn, forceRouteCount) {
     state.N = n;
     state.includeReturn = includeReturn !== false;
     state.forceRouteCount = forceRouteCount || 0;
@@ -2330,6 +2452,7 @@ Exports are deliberately layered: route summary (per-route metrics), full route-
 
   function init() {
     wireEvents();
+    detectSolver();
     if (!data) return; // no data yet; loader.js shows the upload screen
     setData(data);
     if (!restore()) {
@@ -2442,7 +2565,7 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
       <section id="panel-summary" class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          A. Summary
+          Summary
         </h2></div>
         <div class="card-body">
         <div class="grid2">
@@ -2467,7 +2590,7 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
       <section class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-          B. Route selector
+          Route selector
         </h2></div>
         <div class="card-body">
           <select id="route-select"></select>
@@ -2479,14 +2602,13 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
       <section class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-          C. Map controls
+          Map controls
         </h2></div>
         <div class="card-body">
           <label class="checkbox"><input type="checkbox" id="show-all"> Show all routes</label>
           <p id="showall-warn" class="warn hidden">All routes shown. Lines are straight-line geographic drafts, NOT road routes.</p>
           <label class="checkbox"><input type="checkbox" id="map-vol" checked> Show volume circles (12-mo MT)</label>
           <label class="checkbox"><input type="checkbox" id="map-rec" checked> Show recency rings (last purchase)</label>
-          <p class="thresh">Circles sized by 12-month volume; ring colour = months since last purchase. Dots show every customer.</p>
           <button id="fit-btn" class="btn btn-primary">Fit map to warehouse + route</button>
         </div>
       </section>
@@ -2494,7 +2616,7 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
       <section id="panel-route-details" class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          D. Route details
+          Route details
         </h2></div>
         <div class="card-body"><div id="route-details"><p>Select a route.</p></div></div>
       </section>
@@ -2516,48 +2638,6 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
         </div>
       </section>
 
-      <section class="panel card">
-        <div class="card-header"><h2>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          Road Constraints Register
-        </h2></div>
-        <div class="card-body">
-          <p class="thresh">Rules use Location IDs (WH, C001…C140). <b>Blocked</b> = never placed consecutively. <b>Uncertain</b> = route gets a visible warning. <b>Not reviewed</b> = visible warning.</p>
-          <div class="regform">
-            <input id="c-from" placeholder="From (e.g. C012)">
-            <input id="c-to" placeholder="To (e.g. C077)">
-            <input id="c-type" placeholder="Type (e.g. Ferry required)">
-            <input id="c-desc" placeholder="Description">
-            <select id="c-status">
-              <option>Blocked</option>
-              <option>Uncertain</option>
-              <option>Validated</option>
-              <option>Not reviewed</option>
-            </select>
-            <input id="c-veh" placeholder="Allowed vehicle">
-            <input id="c-detour" placeholder="Manual detour note">
-            <button id="reg-add">Add constraint</button>
-          </div>
-          <table class="reg">
-            <thead><tr><th>From</th><th>To</th><th>Type</th><th>Description</th><th>Status</th><th>Vehicle</th><th>Detour</th><th>By</th><th>Date</th><th></th></tr></thead>
-            <tbody id="reg-body"></tbody>
-          </table>
-          <div class="btnrow">
-            <button id="reg-import">Import file…</button>
-            <button id="reg-export">Export register (CSV)</button>
-            <button id="reg-json" class="danger">Clear register</button>
-            <input id="reg-file" type="file" accept=".csv,.json,.xlsx,.xls" hidden>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel card">
-        <div class="card-header"><h2>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          Exceptions
-        </h2></div>
-        <div class="card-body"><div id="exc-list"></div></div>
-      </section>
     </aside>
 
     <section class="mapcol">
@@ -2574,6 +2654,7 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
     <label>Route size N <input id="rp-N" type="number" min="1" max="140" value="7"></label>
     <label>Force exact number of routes (optional; overrides N) <input id="rp-count" type="number" min="1" max="140" value=""></label>
     <label class="checkbox"><input id="rp-return" type="checkbox" checked> Include return-to-warehouse distance in route score.</label>
+    <label class="checkbox" id="solver-toggle-wrap" style="display:none"><input type="checkbox" id="rp-use-solver"> Use OR-Tools solver <span id="solver-status" class="oktxt"></span></label>
     <div class="btnrow">
       <button id="rp-ok">Build plan</button>
       <button id="rp-cancel">Cancel</button>
@@ -2586,6 +2667,7 @@ Script order matters: `data.js` and `constraints.js` define globals → vendored
 <script src="vendor/sheetjs/xlsx.full.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/exports.js"></script>
+<script src="js/solver_client.js"></script>
 <script src="js/loader.js"></script>
 <script src="js/ui.js"></script>
 </body>
@@ -2957,7 +3039,7 @@ ol.journey li { margin: 1px 0; }
   box-shadow: 0 1px 3px rgba(0,0,0,.4); font-family: var(--font-data);
 }
 
-.bdot { display: block; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1px rgba(255,255,255,.85); }
+.bdot { display: block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
 .bdot-wrap { background: none; border: none; }
 .wh-pill { display: inline-block; background: var(--c-primary); color: #fff; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.45); letter-spacing: .4px; }
 .wh-wrap { background: none; border: none; }
@@ -3289,7 +3371,7 @@ function run(frame) {
   check("all routes size 7", p.routes.every(function (r) { return r.stops.length === 7; }));
 
   // replan to N=9 so the final route has room (140 = 15x9 + 5)
-  UI.replan(9, true, 50, 250, 0);
+  UI.replan(9, true, 0);
   p = UI.plan();
   check("replan N=9 -> 16 routes", p.n === 9 && p.routes.length === 16, p.routes.length);
   check("replan keeps all assigned", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
@@ -3311,7 +3393,7 @@ function run(frame) {
   check("swap: changelog entry recorded", UI.getChangelog().some(function (e) { return e.action === "swap" && e.customer === cid && e.with === swapT; }));
 
   // move to a FULL route must be rejected
-  UI.replan(9, true, 50, 250, 0);
+  UI.replan(9, true, 0);
   p = UI.plan();
   var full = p.routes[0], srcRoute = p.routes[15]; // full route target, remainder source
   var c2 = srcRoute.stops[0];
@@ -3322,7 +3404,7 @@ function run(frame) {
   check("rejected move changes nothing", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
 
   // reorder within R01
-  UI.replan(10, true, 50, 250, 0);
+  UI.replan(10, true, 0);
   p = UI.plan();
   var rr = p.routes[0];
   var a = rr.stops[0], b = rr.stops[1];

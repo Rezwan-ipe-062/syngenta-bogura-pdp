@@ -35,7 +35,7 @@ function run(frame) {
   check("all routes size 7", p.routes.every(function (r) { return r.stops.length === 7; }));
 
   // replan to N=9 so the final route has room (140 = 15x9 + 5)
-  UI.replan(9, true, 50, 250, 0);
+  UI.replan(9, true, 0);
   p = UI.plan();
   check("replan N=9 -> 16 routes", p.n === 9 && p.routes.length === 16, p.routes.length);
   check("replan keeps all assigned", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
@@ -57,7 +57,7 @@ function run(frame) {
   check("swap: changelog entry recorded", UI.getChangelog().some(function (e) { return e.action === "swap" && e.customer === cid && e.with === swapT; }));
 
   // move to a FULL route must be rejected
-  UI.replan(9, true, 50, 250, 0);
+  UI.replan(9, true, 0);
   p = UI.plan();
   var full = p.routes[0], srcRoute = p.routes[15]; // full route target, remainder source
   var c2 = srcRoute.stops[0];
@@ -68,7 +68,7 @@ function run(frame) {
   check("rejected move changes nothing", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
 
   // reorder within R01
-  UI.replan(10, true, 50, 250, 0);
+  UI.replan(10, true, 0);
   p = UI.plan();
   var rr = p.routes[0];
   var a = rr.stops[0], b = rr.stops[1];

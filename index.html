@@ -48,7 +48,7 @@
       <section id="panel-summary" class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          A. Summary
+          Summary
         </h2></div>
         <div class="card-body">
         <div class="grid2">
@@ -73,7 +73,7 @@
       <section class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-          B. Route selector
+          Route selector
         </h2></div>
         <div class="card-body">
           <select id="route-select"></select>
@@ -85,14 +85,13 @@
       <section class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
-          C. Map controls
+          Map controls
         </h2></div>
         <div class="card-body">
           <label class="checkbox"><input type="checkbox" id="show-all"> Show all routes</label>
           <p id="showall-warn" class="warn hidden">All routes shown. Lines are straight-line geographic drafts, NOT road routes.</p>
           <label class="checkbox"><input type="checkbox" id="map-vol" checked> Show volume circles (12-mo MT)</label>
           <label class="checkbox"><input type="checkbox" id="map-rec" checked> Show recency rings (last purchase)</label>
-          <p class="thresh">Circles sized by 12-month volume; ring colour = months since last purchase. Dots show every customer.</p>
           <button id="fit-btn" class="btn btn-primary">Fit map to warehouse + route</button>
         </div>
       </section>
@@ -100,7 +99,7 @@
       <section id="panel-route-details" class="panel card">
         <div class="card-header"><h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          D. Route details
+          Route details
         </h2></div>
         <div class="card-body"><div id="route-details"><p>Select a route.</p></div></div>
       </section>
@@ -122,48 +121,6 @@
         </div>
       </section>
 
-      <section class="panel card">
-        <div class="card-header"><h2>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          Road Constraints Register
-        </h2></div>
-        <div class="card-body">
-          <p class="thresh">Rules use Location IDs (WH, C001…C140). <b>Blocked</b> = never placed consecutively. <b>Uncertain</b> = route gets a visible warning. <b>Not reviewed</b> = visible warning.</p>
-          <div class="regform">
-            <input id="c-from" placeholder="From (e.g. C012)">
-            <input id="c-to" placeholder="To (e.g. C077)">
-            <input id="c-type" placeholder="Type (e.g. Ferry required)">
-            <input id="c-desc" placeholder="Description">
-            <select id="c-status">
-              <option>Blocked</option>
-              <option>Uncertain</option>
-              <option>Validated</option>
-              <option>Not reviewed</option>
-            </select>
-            <input id="c-veh" placeholder="Allowed vehicle">
-            <input id="c-detour" placeholder="Manual detour note">
-            <button id="reg-add">Add constraint</button>
-          </div>
-          <table class="reg">
-            <thead><tr><th>From</th><th>To</th><th>Type</th><th>Description</th><th>Status</th><th>Vehicle</th><th>Detour</th><th>By</th><th>Date</th><th></th></tr></thead>
-            <tbody id="reg-body"></tbody>
-          </table>
-          <div class="btnrow">
-            <button id="reg-import">Import file…</button>
-            <button id="reg-export">Export register (CSV)</button>
-            <button id="reg-json" class="danger">Clear register</button>
-            <input id="reg-file" type="file" accept=".csv,.json,.xlsx,.xls" hidden>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel card">
-        <div class="card-header"><h2>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          Exceptions
-        </h2></div>
-        <div class="card-body"><div id="exc-list"></div></div>
-      </section>
     </aside>
 
     <section class="mapcol">
@@ -180,6 +137,7 @@
     <label>Route size N <input id="rp-N" type="number" min="1" max="140" value="7"></label>
     <label>Force exact number of routes (optional; overrides N) <input id="rp-count" type="number" min="1" max="140" value=""></label>
     <label class="checkbox"><input id="rp-return" type="checkbox" checked> Include return-to-warehouse distance in route score.</label>
+    <label class="checkbox" id="solver-toggle-wrap" style="display:none"><input type="checkbox" id="rp-use-solver"> Use OR-Tools solver <span id="solver-status" class="oktxt"></span></label>
     <div class="btnrow">
       <button id="rp-ok">Build plan</button>
       <button id="rp-cancel">Cancel</button>
@@ -192,6 +150,7 @@
 <script src="vendor/sheetjs/xlsx.full.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/exports.js"></script>
+<script src="js/solver_client.js"></script>
 <script src="js/loader.js"></script>
 <script src="js/ui.js"></script>
 </body>
