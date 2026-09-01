@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDP Route Optimization — Route Optimizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<nav class="navbar">
+  <a class="navbar-brand" href="#">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+    PDP Route Optimization
+  </a>
+  <div class="navbar-links">
+    <a class="active" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg><span>Optimizer</span></a>
+  </div>
+</nav>
+
+<!-- Upload screen: shown until a workbook is loaded at runtime -->
+<div id="upload-screen" class="upload-wrap">
+  <div class="card">
+    <div class="card-header"><h2>Load customer workbook</h2></div>
+    <div class="card-body">
+      <p class="subtitle">Upload the <b>Bogura distance-matrix workbook (.xlsx)</b>. Routes are built entirely in your browser — no data leaves your machine. Distances are straight-line geographic drafts, not road routes.</p>
+      <div id="upload-zone" class="upload-zone" role="button" tabindex="0" aria-label="Upload customer workbook">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <h3>Drop the workbook here, or click to browse</h3>
+        <p>Required sheets: Read Me, Locations, Distance Matrix, Pair List.<br>Optional: Customer Master (adds region / territory mapping).</p>
+        <span id="upload-status" class="oktxt"></span>
+      </div>
+      <input id="pick-file" type="file" accept=".xlsx,.xls" hidden>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+
+  <div id="geo-note" class="geo-note"></div>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section id="panel-summary" class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          A. Summary
+        </h2></div>
+        <div class="card-body">
+        <div class="grid2">
+          <span>Route size (N)</span><span id="sum-n"></span>
+          <span>Score basis</span><span id="sum-return"></span>
+          <span>Routes</span><span id="sum-routes"></span>
+          <span>Assigned</span><span id="sum-assigned"></span>
+          <span>Require review</span><span id="sum-review"></span>
+          <span>Unassigned</span><span id="sum-unassigned"></span>
+          <span>Warning</span><span id="sum-warn"></span>
+          <span>Total outbound</span><span id="sum-outbound"></span>
+          <span>Total score</span><span id="sum-score"></span>
+        </div>
+        <p id="sum-thresh" class="thresh"></p>
+        <div class="btnrow">
+          <button id="replan-btn">Replan / change N</button>
+          <button id="restore-btn" title="Undo all manual adjustments">Restore original</button>
+          <button id="reset-btn" class="danger">Reset all</button>
+        </div>
+        </div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          B. Route selector
+        </h2></div>
+        <div class="card-body">
+          <select id="route-select"></select>
+          <input id="cust-search" type="search" placeholder="Search customer / BP / Location ID…">
+          <div id="route-list" class="route-list"></div>
+        </div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>
+          C. Map controls
+        </h2></div>
+        <div class="card-body">
+          <label class="checkbox"><input type="checkbox" id="show-all"> Show all routes</label>
+          <p id="showall-warn" class="warn hidden">All routes shown. Lines are straight-line geographic drafts, NOT road routes.</p>
+          <label class="checkbox"><input type="checkbox" id="map-vol" checked> Show volume circles (12-mo MT)</label>
+          <label class="checkbox"><input type="checkbox" id="map-rec" checked> Show recency rings (last purchase)</label>
+          <p class="thresh">Circles sized by 12-month volume; ring colour = months since last purchase. Dots show every customer.</p>
+          <button id="fit-btn" class="btn btn-primary">Fit map to warehouse + route</button>
+        </div>
+      </section>
+
+      <section id="panel-route-details" class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          D. Route details
+        </h2></div>
+        <div class="card-body"><div id="route-details"><p>Select a route.</p></div></div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Exports
+        </h2></div>
+        <div class="card-body">
+          <div class="btnrow wrap">
+            <button id="exp-summary">Route summary (CSV)</button>
+            <button id="exp-stops">Route stops (CSV)</button>
+            <button id="exp-exc">Exceptions (CSV)</button>
+            <button id="exp-changelog">Change log (CSV)</button>
+            <button id="exp-xlsx">All as Excel (.xlsx)</button>
+            <button id="exp-print">Printable route sheets</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Road Constraints Register
+        </h2></div>
+        <div class="card-body">
+          <p class="thresh">Rules use Location IDs (WH, C001…C140). <b>Blocked</b> = never placed consecutively. <b>Uncertain</b> = route gets a visible warning. <b>Not reviewed</b> = visible warning.</p>
+          <div class="regform">
+            <input id="c-from" placeholder="From (e.g. C012)">
+            <input id="c-to" placeholder="To (e.g. C077)">
+            <input id="c-type" placeholder="Type (e.g. Ferry required)">
+            <input id="c-desc" placeholder="Description">
+            <select id="c-status">
+              <option>Blocked</option>
+              <option>Uncertain</option>
+              <option>Validated</option>
+              <option>Not reviewed</option>
+            </select>
+            <input id="c-veh" placeholder="Allowed vehicle">
+            <input id="c-detour" placeholder="Manual detour note">
+            <button id="reg-add">Add constraint</button>
+          </div>
+          <table class="reg">
+            <thead><tr><th>From</th><th>To</th><th>Type</th><th>Description</th><th>Status</th><th>Vehicle</th><th>Detour</th><th>By</th><th>Date</th><th></th></tr></thead>
+            <tbody id="reg-body"></tbody>
+          </table>
+          <div class="btnrow">
+            <button id="reg-import">Import file…</button>
+            <button id="reg-export">Export register (CSV)</button>
+            <button id="reg-json" class="danger">Clear register</button>
+            <input id="reg-file" type="file" accept=".csv,.json,.xlsx,.xls" hidden>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-header"><h2>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Exceptions
+        </h2></div>
+        <div class="card-body"><div id="exc-list"></div></div>
+      </section>
+    </aside>
+
+    <section class="mapcol">
+      <div id="map"><div id="map-legend" class="map-legend hidden"></div></div>
+    </section>
+  </main>
+
+</div>
+
+<div id="replan-modal" class="modal hidden">
+  <div class="modal-backdrop hidden"></div>
+  <div class="modal-card">
+    <h2>Plan setup</h2>
+    <label>Route size N <input id="rp-N" type="number" min="1" max="140" value="7"></label>
+    <label>Force exact number of routes (optional; overrides N) <input id="rp-count" type="number" min="1" max="140" value=""></label>
+    <label class="checkbox"><input id="rp-return" type="checkbox" checked> Include return-to-warehouse distance in route score.</label>
+    <label>Long-leg warning threshold (km) <input id="rp-leg" type="number" min="1" value="50"></label>
+    <label>Route outbound warning threshold (km) <input id="rp-route" type="number" min="1" value="250"></label>
+    <div class="btnrow">
+      <button id="rp-ok">Build plan</button>
+      <button id="rp-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/constraints.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/sheetjs/xlsx.full.min.js"></script>
+<script src="js/core.js"></script>
+<script src="js/exports.js"></script>
+<script src="js/loader.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

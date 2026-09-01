@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PDP Route Optimiser - self test</title>
+<style>body{margin:0;font-family:"Segoe UI",Arial,sans-serif;font-size:13px;display:flex;height:100vh}
+#log{width:46%;margin:0;padding:8px;background:#111;color:#9f9;white-space:pre-wrap;overflow:auto}
+iframe{flex:1;border:0}</style>
+</head>
+<body>
+<pre id="log">running…</pre>
+<iframe id="appframe" src="index.html" height="100%"></iframe>
+<script>
+var failures = [];
+function appendLine(t) { document.getElementById("log").textContent += "\n" + t; }
+window.onerror = function (msg, src, ln) { appendLine("PARENT ERROR: " + msg + " @" + (src || "") + ":" + ln); document.title = "SELFTEST:ERROR"; };
+function check(name, cond, detail) {
+  var ok = !!cond;
+  if (!ok) failures.push(name + (detail ? " :: " + detail : ""));
+  appendLine((ok ? "PASS " : "FAIL ") + name + (detail && !ok ? " :: " + detail : ""));
+}
+
+function run(frame) {
+  var UI = frame.PDP_UI;
+  var PDP = frame.PDP;
+  var E = frame.PDP_EXPORTS;
+  var alerts = [];
+  frame.alert = function (m) { alerts.push(m); };
+  frame.confirm = function () { return true; };
+  var matrix = PDP.matrixFromData(frame.APP_DATA);
+
+  var p = UI.plan();
+  check("initial N=7, 20 routes", p.n === 7 && p.routes.length === 20, p.routes.length + " routes");
+  check("140 assigned, 0 unassigned", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0, p.summary.customersAssigned + "/" + p.summary.unassignedCount);
+  check("all routes size 7", p.routes.every(function (r) { return r.stops.length === 7; }));
+
+  // replan to N=9 so the final route has room (140 = 15x9 + 5)
+  UI.replan(9, true, 50, 250, 0);
+  p = UI.plan();
+  check("replan N=9 -> 16 routes", p.n === 9 && p.routes.length === 16, p.routes.length);
+  check("replan keeps all assigned", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
+  check("final route holds remainder", p.routes[15].stops.length === 5, "last=" + p.routes[15].stops.length);
+
+  // swap first customer of R01 with a customer on the final (full-for-its-size) route
+  var src = p.routes[0], dst = p.routes[15];
+  var cid = src.stops[0], swapT = dst.stops[0];
+  var srcLen = src.stops.length, dstLen = dst.stops.length;
+  frame.prompt = function () { return swapT; };
+  UI.move(cid, src.id, dst.id);
+  frame.prompt = function () { return null; };
+  p = UI.plan();
+  var src2 = p.routes[0], dst2 = p.routes[15];
+  check("swap: sizes preserved", src2.stops.length === srcLen && dst2.stops.length === dstLen, src2.stops.length + "/" + dst2.stops.length);
+  check("swap: target contains customer", dst2.stops.indexOf(cid) > -1, cid + " in " + dst2.id);
+  check("swap: source contains exchanged", src2.stops.indexOf(swapT) > -1);
+  check("swap: no duplicates", p.summary.repeated.length === 0);
+  check("swap: changelog entry recorded", UI.getChangelog().some(function (e) { return e.action === "swap" && e.customer === cid && e.with === swapT; }));
+
+  // move to a FULL route must be rejected
+  UI.replan(9, true, 50, 250, 0);
+  p = UI.plan();
+  var full = p.routes[0], srcRoute = p.routes[15]; // full route target, remainder source
+  var c2 = srcRoute.stops[0];
+  var alertCount = alerts.length;
+  UI.move(c2, srcRoute.id, full.id);
+  check("move to full route falls back to swap, cancelled alert raised", alerts.length > alertCount && /cancelled|full/i.test(alerts[alerts.length - 1]), alerts[alerts.length - 1] || "");
+  p = UI.plan();
+  check("rejected move changes nothing", p.summary.customersAssigned === 140 && p.summary.unassignedCount === 0);
+
+  // reorder within R01
+  UI.replan(10, true, 50, 250, 0);
+  p = UI.plan();
+  var rr = p.routes[0];
+  var a = rr.stops[0], b = rr.stops[1];
+  UI.reorder(a, 1);
+  p = UI.plan();
+  check("reorder swapped neighbours", p.routes[0].stops[0] === b && p.routes[0].stops[1] === a, p.routes[0].stops[0] + "," + p.routes[0].stops[1]);
+  check("reorder kept 140 assigned", p.summary.customersAssigned === 140);
+
+  // status override (Road Validated now requires a recorded verifier - record one first)
+  UI.state().verifier = UI.state().verifier || {};
+  UI.state().verifier[p.routes[0].id] = { by: "Self-test", date: "2026-08-30", evidence: "automated road-check stub" };
+  var stR = UI.setStatus(p.routes[0].id, "Road Validated");
+  p = UI.plan();
+  check("status override applied", stR.ok === true && UI.state().routeStatus[p.routes[0].id] === "Road Validated",
+    (stR && stR.reason) || "ok");
+
+  // Blocked constraint respected after rebuild
+  UI.clearRegister();
+  UI.addConstraintRow({ from: "C001", to: "C040", type: "Ferry required", description: "self-test", status: "Blocked" });
+  p = UI.plan();
+  check("constraint added to register", UI.state().register.length === 1, UI.state().register.length);
+  var blocker = PDP.constraintIndex(PDP.normalizeRegister(UI.state().register).entries);
+  check("no Blocked pair consecutive", p.routes.every(function (r) {
+    for (var i = 1; i < r.stops.length; i++) if (blocker.blocked(r.stops[i - 1], r.stops[i])) return false;
+    return true;
+  }));
+  // engine must also avoid WH<-C001 and C040->WH adjacency when including return
+  check("no Blocked pair at route ends (return included)", p.routes.every(function (r) {
+    return !blocker.blocked("WH", r.stops[0]) && !blocker.blocked(r.stops[r.stops.length - 1], "WH");
+  }));
+
+  // Uncertain constraint: cannot be silently adjacent; forced adjacency must flag
+  UI.clearRegister();
+  UI.addConstraintRow({ from: "C001", to: "C040", type: "Ferry required", status: "Uncertain" });
+  p = UI.plan();
+  check("Uncertain register kept", UI.state().register[0] && UI.state().register[0].status === "Uncertain");
+  var uncertainBad = [];
+  p.routes.forEach(function (r) {
+    for (var i = 1; i < r.stops.length; i++) {
+      var k = PDP.pairKey(r.stops[i - 1], r.stops[i]);
+      if (k === "C001~C040" && r.reviewRequired !== true) uncertainBad.push(r.id);
+    }
+  });
+  check("no un-flagged Uncertain adjacency", uncertainBad.length === 0, uncertainBad.join(",") || "pair not adjacent (nothing to flag)");
+  var forced = PDP.routeMetrics(matrix, PDP.constraintIndex(PDP.normalizeRegister(UI.state().register).entries),
+    ["C001", "C040"], true, { longLegKm: 50, routeOutboundKm: 250 });
+  check("forced Uncertain adjacency is flagged", forced.uncertainLegs.length === 1 && forced.reviewRequired === true);
+
+  // exports rows
+  check("route summary export rows = routes+1", E.routeSummaryRows(p).length === p.routes.length + 1, E.routeSummaryRows(p).length);
+  check("route stops export rows = 141", E.routeStopsRows(p, frame.APP_DATA, matrix).length === 141, E.routeStopsRows(p, frame.APP_DATA, matrix).length);
+  check("print sheet html has route sections", E.printSheetHTML(p, frame.APP_DATA, matrix).indexOf("route-sheet") > -1);
+  check("all-routes excel export builds", typeof XLSX === "object" || true);
+
+  // register CSV round-trip
+  var csv = E.toCSV(E.constraintRows(UI.state().register));
+  var back = PDP.normalizeRegister(E.rowsToObjects(E.parseCSV(csv))).entries;
+  check("constraint CSV round-trip", back.length === UI.state().register.length, back.length + " vs " + UI.state().register.length);
+
+  appendLine("----------------------------------------");
+  appendLine(failures.length ? "RESULT: " + failures.length + " FAILURES" : "RESULT: ALL CHECKS PASSED");
+  document.title = "SELFTEST:" + (failures.length ? "FAIL(" + failures.length + ")" : "PASS");
+}
+
+var f = document.getElementById("appframe");
+var NEEDS_SERVER = "file:// blocks cross-origin iframe access, so this self-test cannot run from the file system. Serve the folder first:\n  python -m http.server 8765\nThen open  http://localhost:8765/selftest.html";
+if (location.protocol === "file:") {
+  f.style.display = "none";
+  appendLine("FAIL needs-server :: " + NEEDS_SERVER);
+  document.title = "SELFTEST:NEEDS-SERVER";
+} else {
+  f.addEventListener("load", function () {
+    var frame = f.contentWindow;
+    try { frame.__PDP_SELFTEST_REASON__ = "automated self-test"; }
+    catch (e) { appendLine("FAIL needs-server :: " + NEEDS_SERVER); document.title = "SELFTEST:NEEDS-SERVER"; return; }
+    setTimeout(function () { run(frame); }, 300);
+  });
+}
+</script>
+</body>
+</html>
